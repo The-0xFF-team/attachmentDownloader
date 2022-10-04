@@ -29,42 +29,37 @@ connection.OnNotificationEvent += async (sender, eventArgs) =>
                 new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false)),
             new ItemView(15)
         );
-        items.ToList().ForEach(async item =>
+
+        async void ProcessMail(Item item)
         {
             var itemId = (EmailMessage.Bind(service, item.Id)).Result.Id;
-            var message = EmailMessage.Bind(service, itemId,
-                new PropertySet(BasePropertySet.FirstClassProperties,
-                    new ExtendedPropertyDefinition(0x1013, MapiPropertyType.Binary))).Result;
-            logger.LogInformation(
-                $"New email - Subject: {message.Subject} Sender: {message.Sender.Address} Body: {message.Body.Text}");
+            var message = EmailMessage.Bind(service, itemId, new PropertySet(BasePropertySet.FirstClassProperties, new ExtendedPropertyDefinition(0x1013, MapiPropertyType.Binary))).Result;
+            logger.LogInformation($"New email - Subject: {message.Subject} Sender: {message.Sender.Address} Body: {message.Body.Text}");
 
-
-            message = EmailMessage.Bind(service, itemId,
-                new PropertySet(BasePropertySet.FirstClassProperties, ItemSchema.Attachments)).Result;
+            message = EmailMessage.Bind(service, itemId, new PropertySet(BasePropertySet.FirstClassProperties, ItemSchema.Attachments)).Result;
             foreach (var attachment in message.Attachments)
             {
-                if (attachment is FileAttachment fileAttachment)
-                {
-                    await fileAttachment.Load();
-                    var path = Path.Combine(config["path"], attachment.Name);
-                    await using var fs = new FileStream(path, FileMode.Create);
-                    await using var bw = new BinaryWriter(fs);
-                    bw.Write(fileAttachment.Content);
-                    logger.LogInformation($"File attachment downloaded: {path}");
-                }
+                if (attachment is not FileAttachment fileAttachment) continue;
+                await fileAttachment.Load();
+                var path = Path.Combine(config["path"], attachment.Name);
+                await using var fs = new FileStream(path, FileMode.Create);
+                await using var bw = new BinaryWriter(fs);
+                bw.Write(fileAttachment.Content);
+                logger.LogInformation($"File attachment downloaded: {path}");
             }
 
             message.IsRead = true;
             message.Subject += "_processed";
             await message.Update(ConflictResolutionMode.AutoResolve);
             logger.LogInformation($"Set message as read");
-        });
+        }
+
+        items.ToList().ForEach(ProcessMail);
     }
 };
 connection.OnDisconnect += (sender, eventArgs) => { connection.Open(); };
 
 connection.Open();
-Console.ReadLine();
 
 static ServiceProvider ConfigureLogger()
 {
